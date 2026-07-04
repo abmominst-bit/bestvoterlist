@@ -935,7 +935,13 @@ async function setupVite() {
       server: { middlewareMode: true },
       appType: "spa",
     });
-    app.use(vite.middlewares);
+    // Skip Vite middleware for API routes - let Express handle them
+    app.use((req, res, next) => {
+      if (req.url.startsWith("/api")) {
+        return next();
+      }
+      vite.middlewares(req, res, next);
+    });
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
