@@ -937,6 +937,10 @@ app.get("/api/health", (req, res) => {
 
 // Configure Vite or Static files depending on mode
 async function setupVite() {
+  // Serve public folder for static files (Google verification, favicon, etc.)
+  const publicPath = path.join(process.cwd(), 'public');
+  app.use(express.static(publicPath));
+  
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },

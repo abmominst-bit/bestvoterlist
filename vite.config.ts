@@ -17,6 +17,7 @@ export default defineConfig(() => {
         ext: '.gz',
       })
     ],
+    publicDir: 'public',
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

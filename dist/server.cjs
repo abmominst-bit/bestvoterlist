@@ -887,6 +887,8 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", time: /* @__PURE__ */ new Date() });
 });
 async function setupVite() {
+  const publicPath = import_path.default.join(process.cwd(), "public");
+  app.use(import_express.default.static(publicPath));
   if (process.env.NODE_ENV !== "production") {
     const vite = await (0, import_vite.createServer)({
       server: { middlewareMode: true },
