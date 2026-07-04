@@ -1,5 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { getVoters, getUnions, getSystemSettings } from './voterData';
+import { 
+  getVoters, 
+  getUnions, 
+  getSystemSettings,
+  addVoter,
+  updateVoter,
+  deleteVoter,
+  deleteVoters,
+  saveUnions,
+  saveSystemSettings
+} from './voterData';
+import { getSession, logoutAdmin } from './auth';
 import { Voter, UnionData, VisitorTab, AdminTab, SystemSettings } from './types';
 import { 
   Home as HomeIcon, 
@@ -37,21 +48,31 @@ import AdminUploadImg from './components/AdminUploadImg';
 import AdminSettings from './components/AdminSettings';
 
 export default function App() {
-  // Core Voter and Union States loaded from localStorage
+  // Core Voter and Union States loaded from Supabase
   const [voters, setVoters] = useState<Voter[]>([]);
   const [unions, setUnions] = useState<UnionData[]>([]);
   const [settings, setSettings] = useState<SystemSettings>({
     maintenanceMode: false
   });
 
-  // Session flags
-  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(() => {
-    return localStorage.getItem('isAdminLoggedIn') === 'true';
-  });
+  // Session flags - check Supabase auth
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
 
+  // Check Supabase session on mount
   useEffect(() => {
-    localStorage.setItem('isAdminLoggedIn', isAdminLoggedIn ? 'true' : 'false');
-  }, [isAdminLoggedIn]);
+    (async () => {
+      try {
+        const session = await getSession();
+        setIsAdminLoggedIn(!!session);
+      } catch (err) {
+        console.error('Error checking session:', err);
+        setIsAdminLoggedIn(false);
+      } finally {
+        setAuthLoading(false);
+      }
+    })();
+  }, []);
 
   // Shareable Voter Add/Edit modal state
   const [showVoterModal, setShowVoterModal] = useState(false);
@@ -209,13 +230,8 @@ export default function App() {
   const [activeView, setActiveView] = useState<'visitor' | 'admin' | 'adminLogin'>('visitor');
   const [adminActiveTab, setAdminActiveTab] = useState<AdminTab>('home');
 
-  // Load initial data from in-memory fallback & backend database
+  // Load initial data from Supabase database
   useEffect(() => {
-    // Initial in-memory state setup
-    setVoters(getVoters());
-    setUnions(getUnions());
-    setSettings(getSystemSettings());
-
     // Dynamically apply Google Search Console verification token if stored in localStorage
     const gscToken = localStorage.getItem('google_search_console_token');
     if (gscToken) {
@@ -228,44 +244,35 @@ export default function App() {
       metaTag.setAttribute('content', gscToken);
     }
 
-    // Sync from Backend Database APIs
-    fetch('/api/voters')
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.voters) {
-          setVoters(data.voters);
-        }
-      })
-      .catch(err => console.error("Error loading voters from API:", err));
+    // Load from Supabase
+    (async () => {
+      try {
+        const loadedVoters = await getVoters();
+        setVoters(loadedVoters);
+      } catch (err) {
+        console.error("Error loading voters:", err);
+      }
 
-    fetch('/api/unions')
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.unions) {
-          setUnions(data.unions);
-        }
-      })
-      .catch(err => console.error("Error loading unions from API:", err));
+      try {
+        const loadedUnions = await getUnions();
+        setUnions(loadedUnions);
+      } catch (err) {
+        console.error("Error loading unions:", err);
+      }
 
-    fetch('/api/settings')
-      .then(res => res.json())
-      .then(data => {
-        if (data.success && data.settings) {
-          setSettings(data.settings);
-        }
-      })
-      .catch(err => console.error("Error loading settings from API:", err));
+      try {
+        const loadedSettings = await getSystemSettings();
+        setSettings(loadedSettings);
+      } catch (err) {
+        console.error("Error loading settings:", err);
+      }
+    })();
   }, []);
 
   // Update unions state and persist to database
   const handleUpdateUnions = (newUnions: UnionData[]) => {
     setUnions(newUnions);
-
-    fetch('/api/unions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newUnions)
-    }).catch(err => console.error("API Error updating unions:", err));
+    saveUnions(newUnions).catch(err => console.error("Error updating unions:", err));
   };
 
   // Cascade union or village rename down to voter records
@@ -275,11 +282,7 @@ export default function App() {
       const updatedVoters = voters.map(v => {
         if (v.union === oldUnionName) {
           const updated = { ...v, union: newUnionName };
-          fetch(`/api/voters/${v.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updated)
-          }).catch(err => console.error("Error updating voter union:", err));
+          updateVoter(v.id, updated).catch(err => console.error("Error updating voter union:", err));
           return updated;
         }
         return v;
@@ -290,11 +293,7 @@ export default function App() {
       const updatedVoters = voters.map(v => {
         if (v.union === oldUnionName && v.village === oldVillageName) {
           const updated = { ...v, village: newVillageName };
-          fetch(`/api/voters/${v.id}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updated)
-          }).catch(err => console.error("Error updating voter village:", err));
+          updateVoter(v.id, updated).catch(err => console.error("Error updating voter village:", err));
           return updated;
         }
         return v;
@@ -306,18 +305,22 @@ export default function App() {
   // Update settings and persist to database
   const handleUpdateSettings = (newSettings: SystemSettings) => {
     setSettings(newSettings);
-
-    fetch('/api/settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newSettings)
-    }).catch(err => console.error("API Error updating settings:", err));
+    saveSystemSettings(newSettings).catch(err => console.error("Error updating settings:", err));
   };
 
   // Admin logout handler
-  const handleAdminLogout = () => {
-    setIsAdminLoggedIn(false);
-    setActiveView('visitor');
+  const handleAdminLogout = async () => {
+    try {
+      const result = await logoutAdmin();
+      if (result.success) {
+        setIsAdminLoggedIn(false);
+        setActiveView('visitor');
+      }
+    } catch (err) {
+      console.error('Logout error:', err);
+      setIsAdminLoggedIn(false);
+      setActiveView('visitor');
+    }
   };
 
   // Switch to login view
@@ -339,18 +342,11 @@ export default function App() {
     const updated = [newVoter, ...voters];
     setVoters(updated);
 
-    fetch('/api/voters', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newVoter)
-    })
-    .then(res => res.json())
-    .then(data => {
-      if (data.success && data.voter) {
-        setVoters(prev => prev.map(v => v.id === newVoter.id ? data.voter : v));
+    addVoter(newVoter).then(result => {
+      if (result) {
+        setVoters(prev => prev.map(v => v.id === newVoter.id ? result : v));
       }
-    })
-    .catch(err => console.error("API Error adding voter:", err));
+    }).catch(err => console.error("Error adding voter:", err));
   };
 
   // Edit a voter in database & local state
@@ -358,18 +354,11 @@ export default function App() {
     const updated = voters.map(v => v.id === updatedVoter.id ? updatedVoter : v);
     setVoters(updated);
 
-    fetch(`/api/voters/${updatedVoter.id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updatedVoter)
-    })
-    .then(res => res.json())
-    .then(data => {
-      if (data.success && data.voter) {
-        setVoters(prev => prev.map(v => v.id === updatedVoter.id ? data.voter : v));
+    updateVoter(updatedVoter.id, updatedVoter).then(result => {
+      if (result) {
+        setVoters(prev => prev.map(v => v.id === updatedVoter.id ? result : v));
       }
-    })
-    .catch(err => console.error("API Error updating voter:", err));
+    }).catch(err => console.error("Error updating voter:", err));
   };
 
   // Delete a voter from database & local state
@@ -377,9 +366,7 @@ export default function App() {
     const updated = voters.filter(v => v.id !== id);
     setVoters(updated);
 
-    fetch(`/api/voters/${id}`, {
-      method: 'DELETE'
-    }).catch(err => console.error("API Error deleting voter:", err));
+    deleteVoter(id).catch(err => console.error("Error deleting voter:", err));
   };
 
   // Bulk delete multiple voters
@@ -387,11 +374,7 @@ export default function App() {
     const updated = voters.filter(v => !ids.includes(v.id));
     setVoters(updated);
 
-    fetch('/api/voters/bulk-delete', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids })
-    }).catch(err => console.error("API Error bulk deleting voters:", err));
+    deleteVoters(ids).catch(err => console.error("Error bulk deleting voters:", err));
   };
 
   // Integrate batch imported list to database & local state
@@ -413,11 +396,7 @@ export default function App() {
     setVoters(updated);
 
     uniqueIncoming.forEach(v => {
-      fetch('/api/voters', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(v)
-      }).catch(err => console.error("API Error importing voter:", err));
+      addVoter(v).catch(err => console.error("Error importing voter:", err));
     });
   };
 
